@@ -145,4 +145,57 @@
   (map-get? Contributions { campaign-id: campaign-id, contributor: contributor })
 )
 
-
+;; ========================================================================
+;; Fund Release Functions
+;; ========================================================================
+;; FundSteps: Claim funds for a completed milestone
+(define-public (claim-milestone (campaign-id uint) (milestone-id uint))
+  (let
+    (
+      (campaign (unwrap! (map-get? Campaigns { campaign-id: campaign-id }) ERR-CAMPAIGN-NOT-FOUND))
+      (milestone (unwrap! (map-get? Milestones { campaign-id: campaign-id, milestone-id: milestone-id }) ERR-INVALID-MILESTONE))
+      (current-block block-height)
+      (campaign-owner (get owner campaign))
+      (milestone-amount (get amount milestone))
+      (is-approved (get approved milestone))
+      (is-completed (get completed milestone))
+      (campaign-active (get active campaign))
+    )
+    ;; FundSteps: Authorization and state checks
+    (asserts! (is-eq campaign-owner tx-sender) ERR-NOT-AUTHORIZED)
+    (asserts! campaign-active ERR-CAMPAIGN-ENDED)
+    (asserts! is-approved ERR-MILESTONE-NOT-APPROVED)
+    (asserts! (not is-completed) ERR-MILESTONE-NOT-APPROVED)
+    (asserts! (> milestone-amount u0) ERR-INVALID-MILESTONE)
+    (asserts! (<= milestone-id u3) ERR-INVALID-MILESTONE)
+    
+    ;; FundSteps: Update milestone status
+    (map-set Milestones
+      { campaign-id: campaign-id, milestone-id: milestone-id }
+      (merge milestone { completed: true })
+    )
+    
+    ;; FundSteps: Check if this is the last milestone
+    (if (and (is-eq milestone-id u3) (get completed (unwrap-panic (get-milestone campaign-id u1))) (get completed (unwrap-panic (get-milestone campaign-id u2))))
+      (map-set Campaigns
+        { campaign-id: campaign-id }
+        (merge campaign { active: false })
+      )
+      false
+    )
+    
+    ;; FundSteps: Log the claim event
+    (print {
+      event: "milestone-claimed",
+      campaign-id: campaign-id,
+      milestone-id: milestone-id,
+      amount: milestone-amount,
+      claimant: tx-sender,
+      block-height: current-block
+    })
+    
+    ;; FundSteps: Transfer funds
+    (try! (as-contract (stx-transfer? milestone-amount tx-sender campaign-owner)))
+    (ok true)
+  )
+)
